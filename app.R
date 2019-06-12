@@ -5,7 +5,8 @@
 # Find out more about building applications with Shiny here:
 #
 #    http://shiny.rstudio.com/
-#
+# https://shiny.rstudio.com/tutorial/
+# ended at about 22 minutes
 
 library(shiny)
 
