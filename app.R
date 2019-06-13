@@ -9,17 +9,57 @@
 # ended at about 22 minutes
 
 library(shiny)
+library(ggplot2)
+library(plotly)
+library(purrr)
+library(dplyr)
+library(DT)
 
 # Define UI for application 
-ui <- fluidPage(
+ui <- fluidPage( 
+    titlePanel("Draw your own CDFs"),
     # *Input() functions
-    sliderInput(inputId = "num", label = "Choose a Number", 
-                value = 25, min = 1, max = 100),
-    textInput(inputId = "title", label = "Write a title", 
-              value = "Histogram of Random Normal Values"),
-    # *Output() functions
-    plotOutput(outputId = "hist"), 
-    verbatimTextOutput("stats")
+    sidebarLayout(
+        sidebarPanel(
+            numericInput("xmin", label = "Minimum X Value", value = 0),
+            numericInput("xmax", label = "Maximum X Value", value = 1),
+            p("Optional: You can also upload your own data (in a single vector .csv file).
+              Upon upload, the empirical CDF will be drawn on both plots."),
+            fileInput("userdat", "Upload .csv",
+                      multiple = FALSE,
+                      accept = c("text/csv",
+                                 "text/comma-separated-values",
+                                 ".csv")), 
+            #actionButton("rec", label = "Record changes", icon =icon("save")), 
+            downloadButton('downloadData', 'Download', icon = icon("download")), 
+            width = 3
+        ),
+        mainPanel( 
+            fluidRow(
+                
+                column(8,  h3("Click to generate points"),
+                       p("To reset the dragging plot, click this plot again."),
+                       plotOutput("clickplot", click = "plot_clicks", 
+                                      width = 600, height = 400)), 
+                column(4, h3("Clicked points below"), dataTableOutput("datatab"))
+            ),
+            fluidRow(
+                column(8, h3("Drag points to adjust"), 
+                       p("To remove a point, drag it off the plot. Note: clicking above plot will cause the below plot to reset. All changes will be lost."),
+                       plotlyOutput("dragplot", width = "600px", height = "400px")),
+                column(4, h3("Dragged points below"), dataTableOutput("datatab2"))
+            )
+        )
+    )
+    # sliderInput(inputId = "num", label = "Choose a Number", 
+    #             value = 25, min = 1, max = 100),
+    # textInput(inputId = "title", label = "Write a title", 
+    #           value = "Histogram of Random Normal Values"),
+    # actionButton(inputId = "norm", label = "Normal"),
+    # actionButton(inputId = "unif", label = "Uniform"),
+    # # *Output() functions
+    # plotOutput(outputId = "hist"), 
+    # verbatimTextOutput("stats")
     # action button 
 )
 
@@ -56,17 +96,159 @@ server <- function(input, output) {
     # observe({}): just give a signle block of code, then it will rerun anytime a
     # reactive value changes. 
     # stop at 1:18:36
+    # delay reactions with eventReactive()
+    # eventReactive(input$go, {rnorm(input$num)})
+    # first arg is value(s) to respond to.
+    # second arg is the code used to build object. will be treated as isolated 
+    # manage state with reactiveValues() 
+    # inputs change based on user values, you can't overwrite input values in general
+    # own list of reactive values: create a list of reactive values to manipulate programmatically 
+    # 
     
-    data <- reactive({
-        rnorm(input$num)
+    click_points_data <- data.frame(x = numeric(), y = numeric())
+    
+    # collect clicked points
+    click_points <- reactive({
+        newpoint <- input$plot_clicks
+        if (!is.null(newpoint))
+            click_points_data <<- data.frame(
+                x = c(click_points_data$x, newpoint$x),
+                y = c(click_points_data$y, newpoint$y), stringsAsFactors = FALSE)
+        click_points_data
     })
     
-    output$hist <- renderPlot({ # braces around code to pass many lines of code to render plot
-        hist(data(), main = isolate({input$title}))
+    
+    # rv is a "persistent state" 
+    rv <- reactiveValues(
+        #data = rnorm(input$num) # cannot pass inputs to reactiveValues? 
+        points2 = data.frame(type = character(0), x = numeric(0), y = numeric(0), stringsAsFactors = FALSE)
+        )
+    
+    # data <- reactive({
+    #     rnorm(input$num)
+    # })
+    # 
+    # data <- eventReactive(input$go, {
+    #     rnorm(input$num)
+    # })
+    
+    
+    observeEvent(input$plot_clicks, {
+        rv$points2 <-  data.frame(type = "click", click_points(), stringsAsFactors = F) %>% 
+            filter(x >= input$xmin , x <= input$xmax, y >= 0, y <= 1 ) # remove points outside the range
+        
     })
-    output$stats <- renderPrint({
-        summary(data())
+    
+    
+    userData <- reactive({
+        if(!is.null(input$userdat)){
+            input$userdat
+        df <- read.csv(input$userdat$datapath, stringsAsFactors = F)
+        df2 <- tibble(x = df[,1], weight = (1/nrow(df)))
+        df2 <- df2 %>% group_by(x) %>% 
+            summarize(weight2 = sum(weight)) %>% 
+            mutate(y = cumsum(weight2))
+        df2
+        }
+        })
+
+    
+    output$clickplot <- renderPlot({ # braces around code to pass many lines of code to render plot
+        p <- ggplot() +
+            #  Clicked points are red circles
+            geom_point(data = click_points(), aes(x = x, y = y), color = "red", shape = 1) +
+            labs(x = "", y = "") +
+            xlim(input$xmin,input$xmax) +
+            ylim(0,1) # restrict to CDFs
+        if(!is.null(input$userdat)){
+         p <- p + geom_line(data = userData(), aes(x = x, y = y))
+        }
+        p
     })
+    
+    output$dragplot <- renderPlotly({
+        circles <- map2(click_points()$x, click_points()$y,
+                        ~list(
+                            type = "circle",
+                            # anchor circles at (mpg, wt)
+                            xanchor = .x,
+                            yanchor = .y,
+                            # give each circle a 2 pixel diameter
+                            x0 = -4, x1 = 4,
+                            y0 = -4, y1 = 4,
+                            xsizemode = "pixel",
+                            ysizemode = "pixel",
+                            # other visual properties
+                            fillcolor = "red",
+                            line = list(color = "transparent")
+                        )
+        )
+        
+        plot_ly() %>%
+            add_trace(x = userData()$x, y = userData()$y, 
+                      type = 'scatter', mode = 'lines', name = 'Empirical CDF',
+                      line = list(color = '#45171D')) %>% 
+            layout(shapes = circles, 
+                   xaxis = list(range = c(input$xmin,input$xmax)),
+                   yaxis = list(range = c(0,1))) %>%
+            config(edits = list(shapePosition = TRUE))
+    })
+    
+    
+    # observe and edit the dragged values 
+    
+    observe({
+        ed <- event_data("plotly_relayout")
+        ed
+        shape_anchors <- ed[grepl("^shapes.*anchor$", names(ed))]
+        if (length(shape_anchors) != 2) return()
+        row_index <- unique(readr::parse_number(names(shape_anchors)) + 1)
+        pts <- as.numeric(shape_anchors)
+        rv$points2$x[row_index] <- pts[1]
+        rv$points2$y[row_index] <- pts[2]
+        rv$points2$type[row_index] <- "dragged"
+    })
+    
+
+    selectedPoints <- reactive({
+        # A workaround to deal with case where click_points() has zero rows
+        data.frame(type = rep("click", nrow(click_points())), click_points(), 
+                   stringsAsFactors = FALSE) %>% 
+            filter(x >= input$xmin , x <= input$xmax, y >= 0, y <= 1 ) # remove points outside the range
+    })
+    
+    output$datatab <- renderDataTable({
+        datatable(selectedPoints(),
+                  options = list(pageLength = 5, lengthChange=FALSE)) %>%
+            formatRound(c(2:3), 3)
+    })
+    
+    
+    output$datatab2 <- renderDataTable({
+        datatable(filter(rv$points2, x>=input$xmin, x <= input$xmax, y >=0, y <=1), ## remove points dragged outside of plot region 
+                  options = list(pageLength = 5, lengthChange=FALSE)) %>%
+            formatRound(c(2:3), 3)
+    })
+    
+    # Download the dragged points
+    
+    output$downloadData <- downloadHandler(
+        
+        # This function returns a string which tells the client
+        # browser what name to use when saving the file.
+        filename = function() {
+            paste0(paste(Sys.Date(), "my-cdf", input$xmin, input$xmax, sep = "-"), ".csv")
+        },
+        
+        # This function should write data to a file given to it by
+        # the argument 'file'.
+        content = function(file) {
+            
+            # Write to a file specified by the 'file' argument
+            write.table(filter(rv$points2, x>=input$xmin, x <= input$xmax, y >=0, y <=1), file, sep = ",",
+                        row.names = FALSE)
+        }
+    )
     
     
     
