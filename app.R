@@ -32,7 +32,7 @@ ui <- fluidPage(
                                  ".csv")), 
             #actionButton("rec", label = "Record changes", icon =icon("save")), 
             downloadButton('downloadData', 'Download', icon = icon("download")), 
-            width = 3
+            width = 3 # width of sidebar panel
         ),
         mainPanel( 
             fluidRow(
@@ -124,15 +124,7 @@ server <- function(input, output) {
         points2 = data.frame(type = character(0), x = numeric(0), y = numeric(0), stringsAsFactors = FALSE)
         )
     
-    # data <- reactive({
-    #     rnorm(input$num)
-    # })
-    # 
-    # data <- eventReactive(input$go, {
-    #     rnorm(input$num)
-    # })
-    
-    
+    # add to rv everytime plot is clicked
     observeEvent(input$plot_clicks, {
         rv$points2 <-  data.frame(type = "click", click_points(), stringsAsFactors = F) %>% 
             filter(x >= input$xmin , x <= input$xmax, y >= 0, y <= 1 ) # remove points outside the range
