@@ -56,9 +56,9 @@ ui <- fluidPage(
     # *Input() functions
     sidebarLayout(
         sidebarPanel(
+            h3("Data Info"),
             numericInput("xmin", label = "Minimum X Value", value = 0),
             numericInput("xmax", label = "Maximum X Value", value = 1),
-            numericInput("seq", label = "Distance between interpolated points", value = .02),
             p("Optional: You can also upload your own data (in a single vector .csv file).
               Upon upload, the empirical CDF will be drawn on both plots."),
             fileInput("userdat", "Upload .csv",
@@ -66,7 +66,21 @@ ui <- fluidPage(
                       accept = c("text/csv",
                                  "text/comma-separated-values",
                                  ".csv")), 
-            actionButton("draw1", label = "Draw curve 1 with approx", icon =icon("pencil-ruler")), 
+            h3("CDF Info"),
+            p("For approximating CDFs, the following information will be used on both bounds."),
+            numericInput("seq", label = "Distance between interpolated points for linear approx()", value = .02),
+            checkboxInput("splines", label = "Check to use splines. Default is linear interpolation with approx()."),
+            numericInput("spar", label = "Smoothing Parameter for splines (0-1)", value = .5, min = 0, max = 1), 
+            h3("First bound"),
+            h4("Click Draw1 button to draw the line connecting the first set of points."),
+            
+            actionButton("draw1", label = "Draw1", icon =icon("pencil-ruler")), 
+            h3("Second bound"),
+            checkboxInput("pts2", label = "Check to begin drawing second set of points for bound 2."),
+            h4("Click Draw2 button to draw the line connecting the second set of points."),
+            actionButton("draw2", label = "Draw2", icon =icon("pencil-ruler"),
+                         style="background-color: #bce0f2;"), 
+            p("Click Download button to download the adjusted points data"),
             downloadButton('downloadData', 'Download', icon = icon("download")), 
             width = 3 # width of sidebar panel
         ),
@@ -83,7 +97,7 @@ ui <- fluidPage(
                 column(8, h3("Drag points to adjust"), 
                        p("To remove a point, drag it off the plot. Note: clicking above plot will cause the below plot to reset. All changes will be lost."),
                        plotlyOutput("dragplot", width = "600px", height = "400px")),
-                column(4, h3("Dragged points below"), dataTableOutput("datatab2"))
+                column(4, h3("Dragged points:"), dataTableOutput("datatab2"), p("Click Download button to download"))
             )
         )
     )
@@ -141,7 +155,7 @@ server <- function(input, output) {
     # own list of reactive values: create a list of reactive values to manipulate programmatically 
     # 
     
-    click_points_data <- data.frame(x = numeric(), y = numeric())
+    click_points_data <- data.frame(x = numeric(), y = numeric(), bound = numeric())
     
     # collect clicked points
     click_points <- reactive({
@@ -149,22 +163,35 @@ server <- function(input, output) {
         if (!is.null(newpoint))
             click_points_data <<- data.frame(
                 x = c(click_points_data$x, newpoint$x),
-                y = c(click_points_data$y, newpoint$y), stringsAsFactors = FALSE)
+                y = c(click_points_data$y, newpoint$y), 
+                bound = c(click_points_data$bound, as.numeric(input$pts2)+1),
+                stringsAsFactors = FALSE)
         click_points_data
+    })
+    
+    # second set of points for bound. 
+    click_points_data2 <- data.frame(x = numeric(), y = numeric())
+    
+    click_points2 <- eventReactive(input$pts2, {
+        newpoint2 <- input$plot_clicks
+        if (!is.null(newpoint2))
+            click_points_data2 <<- data.frame(
+                x = c(click_points_data2$x, newpoint2$x),
+                y = c(click_points_data2$y, newpoint2$y), stringsAsFactors = FALSE)
+        click_points_data2
     })
     
     
     # rv is a "persistent state" 
     rv <- reactiveValues(
         #data = rnorm(input$num) # cannot pass inputs to reactiveValues? 
-        points2 = data.frame(type = character(0), x = numeric(0), y = numeric(0), stringsAsFactors = FALSE)
+        points2 = data.frame(x = numeric(0), y = numeric(0), bound = numeric(0), stringsAsFactors = FALSE)
         )
     
     # add to rv everytime plot is clicked
     observeEvent(input$plot_clicks, {
-        rv$points2 <-  data.frame(type = "click", click_points(), stringsAsFactors = F) %>% 
+        rv$points2 <-  click_points() %>% 
             filter(x >= input$xmin , x <= input$xmax, y >= 0, y <= 1 ) # remove points outside the range
-        
     })
     
     
@@ -181,17 +208,32 @@ server <- function(input, output) {
         })
     
     approx_curve1 <- eventReactive(input$draw1, {
-        curve1_dat <- augment_cdf(dat = click_points(), xrange = c(input$xmin, input$xmax))
-        approx_curve1_dat <- approx(x = curve1_dat$x, y = curve1_dat$y, n = (((input$xmax - input$xmin) / input$seq) + 1))
+        curve1_dat <- augment_cdf(dat = rv$points2 %>% filter(bound == 1), xrange = c(input$xmin, input$xmax))
+        if (input$splines){
+            approx_curve1_dat <- smooth.spline(x = curve1_dat$x, y = curve1_dat$y, spar = input$spar)
+        } else {
+            approx_curve1_dat <- approx(x = curve1_dat$x, y = curve1_dat$y, n = (((input$xmax - input$xmin) / input$seq) + 1))
+        }
          data.frame(x = approx_curve1_dat$x, y = approx_curve1_dat$y)
+    })
+    
+    approx_curve2 <- eventReactive(input$draw2, {
+        curve1_dat <- augment_cdf(dat = rv$points2 %>% filter(bound == 2), xrange = c(input$xmin, input$xmax))
+        if (input$splines){
+            approx_curve1_dat <- smooth.spline(x = curve1_dat$x, y = curve1_dat$y, spar = input$spar)
+        } else {
+            approx_curve1_dat <- approx(x = curve1_dat$x, y = curve1_dat$y, n = (((input$xmax - input$xmin) / input$seq) + 1))
+        }
+        data.frame(x = approx_curve1_dat$x, y = approx_curve1_dat$y)
     })
 
     
     output$clickplot <- renderPlot({ # braces around code to pass many lines of code to render plot
         p <- ggplot() +
             #  Clicked points are red circles
-            geom_point(data = click_points(), aes(x = x, y = y), color = "red", shape = 1) +
-            labs(x = "", y = "") +
+            geom_point(data = click_points(), aes(x = x, y = y, color = as.factor(bound)), shape = 1) +
+            scale_color_manual(values = c("red", "blue")) + 
+            labs(x = "", y = "", color = "Bound") +
             xlim(input$xmin,input$xmax) +
             ylim(0,1) # restrict to CDFs
         if(!is.null(input$userdat)){
@@ -199,26 +241,30 @@ server <- function(input, output) {
         }
         if (input$draw1){
             p <- p + geom_line(data = approx_curve1(), aes(x = x, y = y), color = "red")
+        } 
+        if (input$draw2){
+            p <- p + geom_line(data = approx_curve2(), aes(x = x, y = y), color = "blue")
         }
         p
     }) 
     
     output$dragplot <- renderPlotly({
-        circles <- map2(click_points()$x, click_points()$y,
-                        ~list(
+        circles <- pmap(list(click_points()$x, click_points()$y, c("red", "blue")[click_points()$bound]), 
+                        function(a,b,c){
+                          list(
                             type = "circle",
                             # anchor circles at (mpg, wt)
-                            xanchor = .x,
-                            yanchor = .y,
+                            xanchor = a,
+                            yanchor = b,
                             # give each circle a 2 pixel diameter
                             x0 = -4, x1 = 4,
                             y0 = -4, y1 = 4,
                             xsizemode = "pixel",
                             ysizemode = "pixel",
                             # other visual properties
-                            fillcolor = "red",
+                            fillcolor = c,
                             line = list(color = "transparent")
-                        )
+                        )}
         )
         
        py <- plot_ly() %>%
@@ -235,6 +281,12 @@ server <- function(input, output) {
                         type='scatter', mode = 'lines', name = 'Interpolated 1',
                           line = list(color = 'red'))
        }
+       if (input$draw2){
+           py <-  py %>% 
+               add_trace(x = approx_curve2()$x, y= approx_curve2()$y,
+                         type='scatter', mode = 'lines', name = 'Interpolated 2',
+                         line = list(color = 'blue'))
+       }
        py 
     })
     
@@ -250,28 +302,26 @@ server <- function(input, output) {
         pts <- as.numeric(shape_anchors)
         rv$points2$x[row_index] <- pts[1]
         rv$points2$y[row_index] <- pts[2]
-        rv$points2$type[row_index] <- "dragged"
     })
     
 
     selectedPoints <- reactive({
         # A workaround to deal with case where click_points() has zero rows
-        data.frame(type = rep("click", nrow(click_points())), click_points(), 
-                   stringsAsFactors = FALSE) %>% 
+         click_points() %>% 
             filter(x >= input$xmin , x <= input$xmax, y >= 0, y <= 1 ) # remove points outside the range
     })
     
     output$datatab <- renderDataTable({
         datatable(selectedPoints(),
                   options = list(pageLength = 5, lengthChange=FALSE)) %>%
-            formatRound(c(2:3), 3)
+            formatRound(c(1:2), 3)
     })
     
     
     output$datatab2 <- renderDataTable({
         datatable(filter(rv$points2, x>=input$xmin, x <= input$xmax, y >=0, y <=1), ## remove points dragged outside of plot region 
                   options = list(pageLength = 5, lengthChange=FALSE)) %>%
-            formatRound(c(2:3), 3)
+            formatRound(c(1:2), 3)
     })
     
     # Download the dragged points
