@@ -15,6 +15,41 @@ library(purrr)
 library(dplyr)
 library(DT)
 
+
+# other functions needed 
+
+## augment data for approximating the cdf. 
+augment_cdf <- function(dat,xrange, yrange = c(0,1)){
+    dat2 <-  dat %>% arrange(x) %>% mutate(monotone = y == cummax(y)) %>% filter(monotone) 
+    
+    hits_ymin <- min(dat2$y) == yrange[1]
+    hits_ymax <- max(dat2$y) == yrange[2]
+    hits_xmin <- min(dat2$x) == xrange[1]
+    hits_xmax <- max(dat2$x) == xrange[2]
+    
+    
+    if (hits_ymin & !hits_xmin) {
+        dat2 <- dat2 %>% add_row(x = xrange[1], y = yrange[1])
+    }
+    if (hits_ymax & !hits_xmax) {
+        dat2 <- dat2 %>% add_row(x = xrange[2], y = yrange[2])
+    }
+    if (hits_xmax & !hits_ymax) {
+        # if the max x value is present, but it doesn't hit the ymax, replace it
+        dat2[which(dat2$x == xrange[2] & dat2$y == max(dat2$y)),] <- c(xrange[2], yrange[2])
+    }
+    if (!hits_xmin & !hits_ymin){
+        dat2 <- dat2 %>% add_row(x = xrange[1], y = yrange[1])
+    }
+    if (!hits_xmax & !hits_ymax){
+        dat2 <- dat2 %>% add_row(x = xrange[2], y = yrange[2])
+    }
+    
+    dat2 %>% arrange(x)
+    
+}
+
+
 # Define UI for application 
 ui <- fluidPage( 
     titlePanel("Draw your own CDFs"),
@@ -23,6 +58,7 @@ ui <- fluidPage(
         sidebarPanel(
             numericInput("xmin", label = "Minimum X Value", value = 0),
             numericInput("xmax", label = "Maximum X Value", value = 1),
+            numericInput("seq", label = "Distance between interpolated points", value = .02),
             p("Optional: You can also upload your own data (in a single vector .csv file).
               Upon upload, the empirical CDF will be drawn on both plots."),
             fileInput("userdat", "Upload .csv",
@@ -30,7 +66,7 @@ ui <- fluidPage(
                       accept = c("text/csv",
                                  "text/comma-separated-values",
                                  ".csv")), 
-            #actionButton("rec", label = "Record changes", icon =icon("save")), 
+            actionButton("draw1", label = "Draw curve 1 with approx", icon =icon("pencil-ruler")), 
             downloadButton('downloadData', 'Download', icon = icon("download")), 
             width = 3 # width of sidebar panel
         ),
@@ -143,6 +179,12 @@ server <- function(input, output) {
         df2
         }
         })
+    
+    approx_curve1 <- eventReactive(input$draw1, {
+        curve1_dat <- augment_cdf(dat = click_points(), xrange = c(input$xmin, input$xmax))
+        approx_curve1_dat <- approx(x = curve1_dat$x, y = curve1_dat$y, n = (((input$xmax - input$xmin) / input$seq) + 1))
+         data.frame(x = approx_curve1_dat$x, y = approx_curve1_dat$y)
+    })
 
     
     output$clickplot <- renderPlot({ # braces around code to pass many lines of code to render plot
@@ -155,8 +197,11 @@ server <- function(input, output) {
         if(!is.null(input$userdat)){
          p <- p + geom_line(data = userData(), aes(x = x, y = y))
         }
+        if (input$draw1){
+            p <- p + geom_line(data = approx_curve1(), aes(x = x, y = y), color = "red")
+        }
         p
-    })
+    }) 
     
     output$dragplot <- renderPlotly({
         circles <- map2(click_points()$x, click_points()$y,
@@ -176,7 +221,7 @@ server <- function(input, output) {
                         )
         )
         
-        plot_ly() %>%
+       py <- plot_ly() %>%
             add_trace(x = userData()$x, y = userData()$y, 
                       type = 'scatter', mode = 'lines', name = 'Empirical CDF',
                       line = list(color = '#45171D')) %>% 
@@ -184,6 +229,13 @@ server <- function(input, output) {
                    xaxis = list(range = c(input$xmin,input$xmax)),
                    yaxis = list(range = c(0,1))) %>%
             config(edits = list(shapePosition = TRUE))
+       if (input$draw1){
+          py <-  py %>% 
+               add_trace(x = approx_curve1()$x, y= approx_curve1()$y,
+                        type='scatter', mode = 'lines', name = 'Interpolated 1',
+                          line = list(color = 'red'))
+       }
+       py 
     })
     
     
