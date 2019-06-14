@@ -22,6 +22,8 @@ library(DT)
 augment_cdf <- function(dat,xrange, yrange = c(0,1)){
     dat2 <-  dat %>% arrange(x) %>% mutate(monotone = y == cummax(y)) %>% filter(monotone) 
     
+    bnd <- unique(dat$bound)
+    
     hits_ymin <- min(dat2$y) == yrange[1]
     hits_ymax <- max(dat2$y) == yrange[2]
     hits_xmin <- min(dat2$x) == xrange[1]
@@ -29,20 +31,20 @@ augment_cdf <- function(dat,xrange, yrange = c(0,1)){
     
     
     if (hits_ymin & !hits_xmin) {
-        dat2 <- dat2 %>% add_row(x = xrange[1], y = yrange[1])
+        dat2 <- dat2 %>% add_row(x = xrange[1], y = yrange[1], bound = bnd)
     }
     if (hits_ymax & !hits_xmax) {
-        dat2 <- dat2 %>% add_row(x = xrange[2], y = yrange[2])
+        dat2 <- dat2 %>% add_row(x = xrange[2], y = yrange[2], bound = bnd)
     }
     if (hits_xmax & !hits_ymax) {
         # if the max x value is present, but it doesn't hit the ymax, replace it
-        dat2[which(dat2$x == xrange[2] & dat2$y == max(dat2$y)),] <- c(xrange[2], yrange[2])
+        dat2[which(dat2$x == xrange[2] & dat2$y == max(dat2$y)),] <- c(xrange[2], yrange[2], bnd)
     }
     if (!hits_xmin & !hits_ymin){
-        dat2 <- dat2 %>% add_row(x = xrange[1], y = yrange[1])
+        dat2 <- dat2 %>% add_row(x = xrange[1], y = yrange[1], bound = bnd)
     }
     if (!hits_xmax & !hits_ymax){
-        dat2 <- dat2 %>% add_row(x = xrange[2], y = yrange[2])
+        dat2 <- dat2 %>% add_row(x = xrange[2], y = yrange[2], bound = bnd)
     }
     
     dat2 %>% arrange(x)
@@ -278,13 +280,13 @@ server <- function(input, output) {
        if (input$draw1){
           py <-  py %>% 
                add_trace(x = approx_curve1()$x, y= approx_curve1()$y,
-                        type='scatter', mode = 'lines', name = 'Interpolated 1',
+                        type='scatter', mode = 'lines', name = 'Bound 1',
                           line = list(color = 'red'))
        }
        if (input$draw2){
            py <-  py %>% 
                add_trace(x = approx_curve2()$x, y= approx_curve2()$y,
-                         type='scatter', mode = 'lines', name = 'Interpolated 2',
+                         type='scatter', mode = 'lines', name = 'Bound 2',
                          line = list(color = 'blue'))
        }
        py 
