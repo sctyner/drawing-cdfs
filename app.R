@@ -70,7 +70,7 @@ ui <- fluidPage(
                                  ".csv")), 
             h3("CDF Info"),
             p("For approximating CDFs, the following information will be used on both bounds."),
-            numericInput("seq", label = "Distance between interpolated points for linear approx()", value = .02),
+            numericInput("seq", label = "Distance between grid points for function approximation.", value = .02),
             checkboxInput("splines", label = "Check to use splines. Default is linear interpolation with approx()."),
             numericInput("spar", label = "Smoothing Parameter for splines (0-1)", value = .5, min = 0, max = 1), 
             h3("First bound"),
@@ -82,7 +82,9 @@ ui <- fluidPage(
             h4("Click Draw2 button to draw the line connecting the second set of points."),
             actionButton("draw2", label = "Draw2", icon =icon("pencil-ruler"),
                          style="background-color: #bce0f2;"), 
-            p("Click Download button to download the adjusted points data"),
+            h4("Click Draw Mean button to draw the mean of the upper and lower bounds."),
+            actionButton("drawmean", label = "Draw Mean", icon =icon("pencil-ruler")),
+            p("Click Download button to download the mean of the upper and lower bounds."),
             downloadButton('downloadData', 'Download', icon = icon("download")), 
             width = 3 # width of sidebar panel
         ),
@@ -213,22 +215,44 @@ server <- function(input, output) {
         curve1_dat <- augment_cdf(dat = rv$points2 %>% filter(bound == 1), xrange = c(input$xmin, input$xmax))
         if (input$splines){
             approx_curve1_dat <- smooth.spline(x = curve1_dat$x, y = curve1_dat$y, spar = input$spar)
+            approxed_data <- predict(approx_curve1_dat, seq(input$xmin, input$xmax, by = input$seq))
+            approxed_data <- data.frame(x = approxed_data$x, y = approxed_data$y, 
+                                        bound = 1, method = "splines", stringsAsFactors = F)
         } else {
-            approx_curve1_dat <- approx(x = curve1_dat$x, y = curve1_dat$y, n = (((input$xmax - input$xmin) / input$seq) + 1))
+            approx_curve1_dat <- approxfun(x = curve1_dat$x, y = curve1_dat$y)
+            approxed_data <- data.frame(x = seq(input$xmin, input$xmax, by = input$seq),
+                                        y = approx_curve1_dat(seq(input$xmin, input$xmax, by = input$seq)),
+                                        bound = 1, method = "linear", stringsAsFactors = F)
         }
-         data.frame(x = approx_curve1_dat$x, y = approx_curve1_dat$y)
+         approxed_data
     })
     
     approx_curve2 <- eventReactive(input$draw2, {
-        curve1_dat <- augment_cdf(dat = rv$points2 %>% filter(bound == 2), xrange = c(input$xmin, input$xmax))
+        curve2_dat <- augment_cdf(dat = rv$points2 %>% filter(bound == 2), xrange = c(input$xmin, input$xmax))
         if (input$splines){
-            approx_curve1_dat <- smooth.spline(x = curve1_dat$x, y = curve1_dat$y, spar = input$spar)
+            approx_curve2_dat <- smooth.spline(x = curve2_dat$x, y = curve2_dat$y, spar = input$spar)
+            approxed_data2 <- predict(approx_curve2_dat, seq(input$xmin, input$xmax, by = input$seq))
+            approxed_data2 <- data.frame(x = approxed_data2$x, y = approxed_data2$y, 
+                                        bound = 2, method = "splines", stringsAsFactors = F)
         } else {
-            approx_curve1_dat <- approx(x = curve1_dat$x, y = curve1_dat$y, n = (((input$xmax - input$xmin) / input$seq) + 1))
-        }
-        data.frame(x = approx_curve1_dat$x, y = approx_curve1_dat$y)
+            approx_curve2_dat <- approxfun(x = curve2_dat$x, y = curve2_dat$y)
+            approxed_data2 <- data.frame(x = seq(input$xmin, input$xmax, by = input$seq),
+                                        y = approx_curve2_dat(seq(input$xmin, input$xmax, by = input$seq)),
+                                        bound = 2, method = "linear", stringsAsFactors = F)        }
+        approxed_data2
     })
 
+    mean_bounds <- eventReactive(input$drawmean,{
+        if (!is.null(approx_curve1()) & !is.null(approx_curve2())){
+            new_y <- (approx_curve1()$y + approx_curve2()$y)/2
+            my_meth <- ifelse(input$splines, "splines", "linear")
+            mean_bds <- data.frame(x = seq(input$xmin, input$xmax, by = input$seq),
+                                   y = new_y,
+                                   bound = "mean", method = my_meth, stringsAsFactors = F )
+            mean_bds
+        }
+        
+    })
     
     output$clickplot <- renderPlot({ # braces around code to pass many lines of code to render plot
         p <- ggplot() +
@@ -246,6 +270,11 @@ server <- function(input, output) {
         } 
         if (input$draw2){
             p <- p + geom_line(data = approx_curve2(), aes(x = x, y = y), color = "blue")
+        } 
+        if (input$draw1 & input$draw2 & input$drawmean){
+            p <- p + geom_line(data = mean_bounds(), aes(x = x, y = y)) + 
+                geom_area(data = approx_curve1(), aes(x = x, y = y), fill = "blue", alpha = .3) + 
+                geom_ribbon(data = approx_curve2(), aes(x = x , ymin = y, ymax = 1), fill = "red", alpha = .3)
         }
         p
     }) 
@@ -288,6 +317,12 @@ server <- function(input, output) {
                add_trace(x = approx_curve2()$x, y= approx_curve2()$y,
                          type='scatter', mode = 'lines', name = 'Bound 2',
                          line = list(color = 'blue'))
+       }
+       if (input$draw1 & input$draw2 & input$drawmean){
+           py <- py %>% 
+               add_trace(x = mean_bounds()$x, y = mean_bounds()$y, 
+                         type='scatter', mode = 'lines', name = 'Mean',
+                         line = list(color = 'black'))
        }
        py 
     })
@@ -333,7 +368,7 @@ server <- function(input, output) {
         # This function returns a string which tells the client
         # browser what name to use when saving the file.
         filename = function() {
-            paste0(paste(Sys.Date(), "my-cdf", input$xmin, input$xmax, sep = "-"), ".csv")
+            paste0(paste(Sys.Date(), "my-cdf-mean", input$xmin, input$xmax, sep = "-"), ".csv")
         },
         
         # This function should write data to a file given to it by
@@ -341,7 +376,7 @@ server <- function(input, output) {
         content = function(file) {
             
             # Write to a file specified by the 'file' argument
-            write.table(filter(rv$points2, x>=input$xmin, x <= input$xmax, y >=0, y <=1), file, sep = ",",
+            write.table(mean_bounds(), file, sep = ",",
                         row.names = FALSE)
         }
     )
