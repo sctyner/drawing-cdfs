@@ -31,20 +31,20 @@ augment_cdf <- function(dat,xrange, yrange = c(0,1)){
     
     
     if (hits_ymin & !hits_xmin) {
-        dat2 <- dat2 %>% add_row(x = xrange[1], y = yrange[1], bound = bnd)
+        dat2 <- dat2 %>% add_row(x = xrange[1], y = yrange[1], bound = bnd, method = "augmented")
     }
     if (hits_ymax & !hits_xmax) {
-        dat2 <- dat2 %>% add_row(x = xrange[2], y = yrange[2], bound = bnd)
+        dat2 <- dat2 %>% add_row(x = xrange[2], y = yrange[2], bound = bnd, method = "augmented")
     }
     if (hits_xmax & !hits_ymax) {
         # if the max x value is present, but it doesn't hit the ymax, replace it
-        dat2[which(dat2$x == xrange[2] & dat2$y == max(dat2$y)),] <- c(xrange[2], yrange[2], bnd)
+        dat2[which(dat2$x == xrange[2] & dat2$y == max(dat2$y)),] <- c(xrange[2], yrange[2], bnd, "augmented", NA)
     }
     if (!hits_xmin & !hits_ymin){
-        dat2 <- dat2 %>% add_row(x = xrange[1], y = yrange[1], bound = bnd)
+        dat2 <- dat2 %>% add_row(x = xrange[1], y = yrange[1], bound = bnd, method = "augmented")
     }
     if (!hits_xmax & !hits_ymax){
-        dat2 <- dat2 %>% add_row(x = xrange[2], y = yrange[2], bound = bnd)
+        dat2 <- dat2 %>% add_row(x = xrange[2], y = yrange[2], bound = bnd, method = "augmented")
     }
     
     dat2 %>% arrange(x)
@@ -84,7 +84,7 @@ ui <- fluidPage(
                          style="background-color: #bce0f2;"), 
             h4("Click Draw Mean button to draw the mean of the upper and lower bounds."),
             actionButton("drawmean", label = "Draw Mean", icon =icon("pencil-ruler")),
-            p("Click Download button to download the mean of the upper and lower bounds."),
+            p("Click Download button to download all available data"),
             downloadButton('downloadData', 'Download', icon = icon("download")), 
             width = 3 # width of sidebar panel
         ),
@@ -159,7 +159,7 @@ server <- function(input, output) {
     # own list of reactive values: create a list of reactive values to manipulate programmatically 
     # 
     
-    click_points_data <- data.frame(x = numeric(), y = numeric(), bound = numeric())
+    click_points_data <- data.frame(x = numeric(), y = numeric(), bound = character(), method = character())
     
     # collect clicked points
     click_points <- reactive({
@@ -168,20 +168,24 @@ server <- function(input, output) {
             click_points_data <<- data.frame(
                 x = c(click_points_data$x, newpoint$x),
                 y = c(click_points_data$y, newpoint$y), 
-                bound = c(click_points_data$bound, as.numeric(input$pts2)+1),
+                bound = c(click_points_data$bound, paste0("bound ", as.numeric(input$pts2)+1)),
+                method = c(click_points_data$method, "clicked"),
                 stringsAsFactors = FALSE)
         click_points_data
     })
     
     # second set of points for bound. 
-    click_points_data2 <- data.frame(x = numeric(), y = numeric())
+    click_points_data2 <- data.frame(x = numeric(), y = numeric(),  bound = character(), method = character())
     
     click_points2 <- eventReactive(input$pts2, {
         newpoint2 <- input$plot_clicks
         if (!is.null(newpoint2))
             click_points_data2 <<- data.frame(
                 x = c(click_points_data2$x, newpoint2$x),
-                y = c(click_points_data2$y, newpoint2$y), stringsAsFactors = FALSE)
+                y = c(click_points_data2$y, newpoint2$y), 
+                bound = c(click_points_data2$bound, paste0("bound ", as.numeric(input$pts2)+1)),
+                method = c(click_points_data2$method, "clicked"),
+                stringsAsFactors = FALSE)
         click_points_data2
     })
     
@@ -189,7 +193,8 @@ server <- function(input, output) {
     # rv is a "persistent state" 
     rv <- reactiveValues(
         #data = rnorm(input$num) # cannot pass inputs to reactiveValues? 
-        points2 = data.frame(x = numeric(0), y = numeric(0), bound = numeric(0), stringsAsFactors = FALSE)
+        points2 = data.frame(x = numeric(0), y = numeric(0), 
+                             bound = character(0), method = character(0), stringsAsFactors = FALSE)
         )
     
     # add to rv everytime plot is clicked
@@ -212,33 +217,34 @@ server <- function(input, output) {
         })
     
     approx_curve1 <- eventReactive(input$draw1, {
-        curve1_dat <- augment_cdf(dat = rv$points2 %>% filter(bound == 1), xrange = c(input$xmin, input$xmax))
+        curve1_dat <- augment_cdf(dat = rv$points2 %>% filter(bound == "bound 1"), xrange = c(input$xmin, input$xmax))
         if (input$splines){
             approx_curve1_dat <- smooth.spline(x = curve1_dat$x, y = curve1_dat$y, spar = input$spar)
             approxed_data <- predict(approx_curve1_dat, seq(input$xmin, input$xmax, by = input$seq))
             approxed_data <- data.frame(x = approxed_data$x, y = approxed_data$y, 
-                                        bound = 1, method = "splines", stringsAsFactors = F)
+                                        bound = "bound 1", method = "splines", stringsAsFactors = F)
+            approxed_data$y[approxed_data$y > 1] <- 1
         } else {
             approx_curve1_dat <- approxfun(x = curve1_dat$x, y = curve1_dat$y)
             approxed_data <- data.frame(x = seq(input$xmin, input$xmax, by = input$seq),
                                         y = approx_curve1_dat(seq(input$xmin, input$xmax, by = input$seq)),
-                                        bound = 1, method = "linear", stringsAsFactors = F)
+                                        bound = "bound 1", method = "linear", stringsAsFactors = F)
         }
          approxed_data
     })
     
     approx_curve2 <- eventReactive(input$draw2, {
-        curve2_dat <- augment_cdf(dat = rv$points2 %>% filter(bound == 2), xrange = c(input$xmin, input$xmax))
+        curve2_dat <- augment_cdf(dat = rv$points2 %>% filter(bound == "bound 2"), xrange = c(input$xmin, input$xmax))
         if (input$splines){
             approx_curve2_dat <- smooth.spline(x = curve2_dat$x, y = curve2_dat$y, spar = input$spar)
             approxed_data2 <- predict(approx_curve2_dat, seq(input$xmin, input$xmax, by = input$seq))
             approxed_data2 <- data.frame(x = approxed_data2$x, y = approxed_data2$y, 
-                                        bound = 2, method = "splines", stringsAsFactors = F)
+                                        bound = "bound 2", method = "splines", stringsAsFactors = F)
         } else {
             approx_curve2_dat <- approxfun(x = curve2_dat$x, y = curve2_dat$y)
             approxed_data2 <- data.frame(x = seq(input$xmin, input$xmax, by = input$seq),
                                         y = approx_curve2_dat(seq(input$xmin, input$xmax, by = input$seq)),
-                                        bound = 2, method = "linear", stringsAsFactors = F)        }
+                                        bound = "bound 2", method = "linear", stringsAsFactors = F)        }
         approxed_data2
     })
 
@@ -280,7 +286,7 @@ server <- function(input, output) {
     }) 
     
     output$dragplot <- renderPlotly({
-        circles <- pmap(list(click_points()$x, click_points()$y, c("red", "blue")[click_points()$bound]), 
+        circles <- pmap(list(click_points()$x, click_points()$y, c("red", "blue")[as.numeric(click_points()$bound == "bound 2") + 1]), 
                         function(a,b,c){
                           list(
                             type = "circle",
@@ -361,7 +367,20 @@ server <- function(input, output) {
             formatRound(c(1:2), 3)
     })
     
-    # Download the dragged points
+    # Download all the data
+    
+    
+    all_data <-  reactive({
+        # bound: bound1, bound2, mean
+        # method: clicked, splines, linear
+        bind_rows(
+            click_points(), 
+            click_points2(), 
+            approx_curve1(),
+            approx_curve2(),  
+            mean_bounds()
+            )# x, y, bound, method
+    })
     
     output$downloadData <- downloadHandler(
         
@@ -376,7 +395,7 @@ server <- function(input, output) {
         content = function(file) {
             
             # Write to a file specified by the 'file' argument
-            write.table(mean_bounds(), file, sep = ",",
+            write.table(all_data(), file, sep = ",",
                         row.names = FALSE)
         }
     )
