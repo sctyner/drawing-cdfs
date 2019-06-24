@@ -14,6 +14,7 @@ library(plotly)
 library(purrr)
 library(dplyr)
 library(DT)
+library(devtools)
 library(dprocsim)
 
 # Define UI for application
